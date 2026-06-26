@@ -1,0 +1,37 @@
+# Environment
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Pytest
+.pytest_cache/
+
+# Packaging
+*.egg-info/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Chroma vector database
+data/chroma/*
+!data/chroma/.gitkeep
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
