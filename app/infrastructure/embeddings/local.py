@@ -1,11 +1,11 @@
 from sentence_transformers import SentenceTransformer
 from app.rag.interfaces.embedding import EmbeddingProvider
 
-
 class LocalEmbeddingProvider(EmbeddingProvider):
     def __init__(self):
         self.model = SentenceTransformer(
-            "sentence-transformers/all-MiniLM-L6-v2"
+            "./models/all-MiniLM-L6-v2",
+            local_files_only=True
         )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
