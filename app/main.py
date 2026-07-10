@@ -1,11 +1,20 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.dependencies import get_rag_service
 from app.schemas.ask import AskRequest
 
 app = FastAPI(
-    title="HimalMesh API",
+    title="MofNet AI API",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 rag_service = get_rag_service()
@@ -14,7 +23,7 @@ rag_service = get_rag_service()
 @app.get("/")
 async def root():
     return {
-        "message": "HimalMesh API running"
+        "message": "MofNet AI API running"
     }
 
 

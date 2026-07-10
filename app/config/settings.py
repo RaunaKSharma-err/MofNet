@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # SQLite
-    database_url: str = "sqlite:///./data/himalmesh.db"
+    database_url: str = "sqlite:///./data/mofnet.db"
     database_echo: bool = False
 
     # ChromaDB
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "anthropic/claude-3-haiku"
     openrouter_embedding_model: str = "openai/text-embedding-3-small"
-    openrouter_app_name: str = "HimalMesh"
+    openrouter_app_name: str = "MofNet AI"
     openrouter_timeout_seconds: float = 60.0
 
     # Ollama (future)

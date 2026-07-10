@@ -67,9 +67,6 @@ class RAGService:
             messages=messages,
             temperature=self._settings.rag_llm_temperature,
         )
-        print("\n===== FINAL ANSWER =====")
-        print(llm_response.content)
-        print("========================\n")
         latency_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
             "RAG answer generated in %dms with %d sources via %s/%s",

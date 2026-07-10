@@ -38,9 +38,6 @@ class ContextRetriever:
                 top_k=self._settings.rag_top_k,
                 where=where,
             )
-            print("\n=== RAW VECTOR RESULTS ===")
-            print(raw_chunks)
-            print("=========================\n")
             filtered = self._filter_by_score(raw_chunks)
             duration_ms = int((time.perf_counter() - start) * 1000)
 

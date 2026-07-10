@@ -15,7 +15,7 @@ class OpenRouterEmbeddingProvider:
             timeout=settings.openrouter_timeout_seconds,
             headers={
                 "Authorization": f"Bearer {settings.openrouter_api_key}",
-                "HTTP-Referer": "https://himalmesh.local",
+                "HTTP-Referer": "https://mofnet-ai.local",
                 "X-Title": settings.openrouter_app_name,
             },
         )
