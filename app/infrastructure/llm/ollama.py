@@ -1,4 +1,6 @@
+import time
 import httpx
+
 from app.rag.models import LLMResponse
 from app.core.exceptions import LLMProviderError
 from app.rag.interfaces.llm import LLMProvider
@@ -11,37 +13,61 @@ class OllamaLLMProvider(LLMProvider):
             "ollama_base_url",
             "http://localhost:11434",
         )
+
         self.model = getattr(
             settings,
             "ollama_model",
             "llama3.2:3b",
         )
 
+        # Reuse HTTP connection
+        self.client = httpx.Client(timeout=120)
+
     def generate(self, messages, temperature=0.3):
         formatted_messages = [
-        {
-            "role": msg.role,
-            "content": msg.content,
-        }
-        for msg in messages
+            {
+                "role": msg.role,
+                "content": msg.content,
+            }
+            for msg in messages
         ]
+
         payload = {
-        "model": self.model,
-        "messages": formatted_messages,
-        "stream": False,
-        "options": {
-            "temperature": temperature,
-        },
+            "model": self.model,
+            "messages": formatted_messages,
+            "stream": False,
+
+            # Keep model loaded in RAM
+            "keep_alive": "30m",
+
+            "options": {
+                "temperature": temperature,
+
+                # Smaller context = faster inference
+                "num_ctx": 2048,
+
+                # Don't generate huge answers
+                "num_predict": 180,
+
+                # Faster decoding
+                "top_k": 40,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+            },
         }
 
         try:
-            response = httpx.post(
+            start = time.perf_counter()
+
+            response = self.client.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=120,
             )
 
             response.raise_for_status()
+
+            elapsed = time.perf_counter() - start
+            print(f"\nOllama inference time: {elapsed:.2f}s")
 
             data = response.json()
 
