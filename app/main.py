@@ -27,6 +27,28 @@ rag_service = get_rag_service()
 speech_service = SpeechService()
 
 
+class _VoiceCache:
+    def __init__(self, maxsize: int = 64):
+        self._cache: dict[str, str] = {}
+        self._keys: list[str] = []
+        self._maxsize = maxsize
+
+    def get(self, key: str) -> str | None:
+        return self._cache.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        if key in self._cache:
+            self._keys.remove(key)
+        elif len(self._keys) >= self._maxsize:
+            oldest = self._keys.pop(0)
+            del self._cache[oldest]
+        self._keys.append(key)
+        self._cache[key] = value
+
+
+_voice_cache = _VoiceCache(maxsize=64)
+
+
 @app.get("/")
 async def root():
     return {
@@ -76,6 +98,7 @@ async def ask(payload: AskRequest):
 
 @app.post("/speech/transcribe")
 async def transcribe_speech(file: UploadFile = File(...)):
+    tmp_path: str | None = None
     try:
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -83,14 +106,17 @@ async def transcribe_speech(file: UploadFile = File(...)):
             tmp.write(content)
             tmp_path = tmp.name
         text = speech_service.transcribe(tmp_path)
-        os.unlink(tmp_path)
         return {"text": text, "language": "en"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 @app.post("/speech/chat")
 async def voice_chat(file: UploadFile = File(...), grade: int | None = None, subject: str | None = None):
+    tmp_path: str | None = None
     try:
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
@@ -98,7 +124,16 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
             tmp.write(content)
             tmp_path = tmp.name
         english_text = speech_service.transcribe(tmp_path)
-        os.unlink(tmp_path)
+
+        cached = _voice_cache.get(english_text.strip().lower())
+        if cached is not None:
+            return {
+                "transcription": english_text,
+                "answer": cached,
+                "language": "en",
+                "cached": True,
+                "sources": [],
+            }
 
         rag_result = rag_service.ask(
             question=english_text,
@@ -107,17 +142,13 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
             language="en",
         )
 
-        audio_response_path = None
-        try:
-            audio_response_path = speech_service.synthesize(rag_result.answer)
-        except Exception:
-            audio_response_path = None
+        _voice_cache.set(english_text.strip().lower(), rag_result.answer)
 
         return {
             "transcription": english_text,
             "answer": rag_result.answer,
             "language": "en",
-            "audio_url": audio_response_path,
+            "cached": False,
             "sources": [
                 {
                     "title": c.title,
@@ -131,6 +162,9 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 @app.get("/speech/audio/{filename}")

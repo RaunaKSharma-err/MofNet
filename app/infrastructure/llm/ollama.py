@@ -43,16 +43,17 @@ class OllamaLLMProvider(LLMProvider):
             "options": {
                 "temperature": temperature,
 
-                # Smaller context = faster inference
-                "num_ctx": 2048,
+                "num_ctx": 1024,
 
                 # Don't generate huge answers
-                "num_predict": 180,
+                "num_predict": 100,
 
                 # Faster decoding
                 "top_k": 40,
                 "top_p": 0.9,
                 "repeat_penalty": 1.1,
+                "num_batch": 64,
+                "num_gpu": 1,
             },
         }
 

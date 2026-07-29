@@ -3,11 +3,9 @@ from app.rag.models import LLMMessage, RAGContext, RetrievedChunk
 
 class PromptBuilder:
     SYSTEM_PROMPT = (
-        "You are MofNet AI, a patient and accurate teacher for students in remote "
-        "schools in Nepal. Answer using ONLY the curriculum context provided below. "
-        "If the context does not contain enough information, say honestly that the "
-        "curriculum materials do not cover the topic yet. Use clear, age-appropriate "
-        "language. When possible, mention the chapter or topic name from the context."
+        "You are MofNet AI, a teacher for Nepal school students. "
+        "Answer using ONLY the curriculum context provided. "
+        "If the context lacks sufficient information, say so honestly."
     )
 
     LANGUAGE_INSTRUCTIONS = {
@@ -22,7 +20,7 @@ class PromptBuilder:
         if context.grade:
             system_content += f"\nThe student is in Grade {context.grade}."
         if context.subject:
-            system_content += f"\nSubject focus: {context.subject.replace('_', ' ').title()}."
+            system_content += f"\nSubject: {context.subject.replace('_', ' ').title()}."
 
         user_content = self._build_user_prompt(context.question, context.chunks)
         return [
@@ -33,22 +31,19 @@ class PromptBuilder:
     def _build_user_prompt(self, question: str, chunks: list[RetrievedChunk]) -> str:
         if not chunks:
             return (
-                "No curriculum context was retrieved.\n\n"
-                f"Student question: {question}\n\n"
-                "Tell the student the topic is not yet available in the local curriculum library."
+                "No curriculum context found.\n"
+                f"Student question: {question}\n"
+                "The topic is not yet in the local curriculum library."
             )
 
-        context_blocks: list[str] = []
+        context_parts: list[str] = []
         for chunk in chunks:
-            header = (
-                f"[Source {chunk.rank} | Grade {chunk.grade} | "
-                f"{chunk.subject.replace('_', ' ').title()} | {chunk.title}]"
-            )
-            context_blocks.append(f"{header}\n{chunk.text}")
+            header = f"[Grade {chunk.grade} | {chunk.subject.replace('_', ' ').title()} | {chunk.title}]"
+            context_parts.append(f"{header}\n{chunk.text}")
 
-        context_text = "\n\n---\n\n".join(context_blocks)
+        context_text = "\n---\n".join(context_parts)
         return (
-            f"Curriculum context:\n\n{context_text}\n\n"
-            f"Student question: {question}\n\n"
-            "Provide a helpful educational answer grounded in the context above."
+            f"Context:\n{context_text}\n\n"
+            f"Question: {question}\n\n"
+            "Answer using only the context above."
         )

@@ -39,18 +39,20 @@ class ContextRetriever:
                 where=where,
             )
             filtered = self._filter_by_score(raw_chunks)
+            deduped = self._dedup_chunks(filtered)
             duration_ms = int((time.perf_counter() - start) * 1000)
 
             logger.info(
-                "Retrieved %d chunks (filtered from %d) in %dms",
-                len(filtered),
+                "Retrieved %d chunks (filtered from %d, deduped from %d) in %dms",
+                len(deduped),
                 len(raw_chunks),
+                len(filtered),
                 duration_ms,
             )
 
             return RetrievalResult(
                 query=question,
-                chunks=filtered,
+                chunks=deduped,
                 retrieval_duration_ms=duration_ms,
             )
         except RetrievalError:
@@ -59,31 +61,22 @@ class ContextRetriever:
             logger.exception("Context retrieval failed")
             raise RetrievalError(f"Failed to retrieve context: {exc}") from exc
 
-    # def _build_filter(
-    #     self,
-    #     grade: int | None,
-    #     subject: str | None,
-    # ) -> dict[str, Any] | None:
-    #     conditions: list[dict[str, Any]] = []
-
-    #     if grade is not None:
-    #         conditions.append({"grade": grade})
-    #     if subject is not None:
-    #         conditions.append({"subject": subject})
-
-    #     if not conditions:
-    #         return None
-    #     if len(conditions) == 1:
-    #         return conditions[0]
-
-    #     return {"$and": conditions}
-
     def _build_filter(
         self,
         grade: int | None,
         subject: str | None,
     ) -> dict[str, Any] | None:
         return None
+
+    def _dedup_chunks(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        seen_texts: set[str] = set()
+        result: list[RetrievedChunk] = []
+        for chunk in chunks:
+            normalized = chunk.text.strip().lower()
+            if normalized not in seen_texts:
+                seen_texts.add(normalized)
+                result.append(chunk)
+        return result
 
     def _filter_by_score(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
         filtered = [

@@ -42,12 +42,13 @@ class Settings(BaseSettings):
 
     # RAG
     curriculum_dir: str = "./data/curriculum"
-    rag_top_k: int = 5
+    rag_top_k: int = 3
     rag_min_score: float = 0.55
     rag_chunk_size: int = 800
     rag_chunk_overlap: int = 100
     rag_llm_temperature: float = 0.3
     rag_embedding_batch_size: int = 32
+    rag_max_context_tokens: int = 1500
 
 
 @lru_cache

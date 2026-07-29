@@ -9,7 +9,7 @@ class WhisperSpeechProvider(SpeechProvider):
 
     def __init__(self):
         self.model = WhisperModel(
-            "small",
+            "tiny",
             device="cpu",
             compute_type="int8",
         )
@@ -18,6 +18,8 @@ class WhisperSpeechProvider(SpeechProvider):
         segments, _info = self.model.transcribe(
             audio_path,
             task="translate",
+            beam_size=5,
+            best_of=5,
         )
         return "".join(segment.text for segment in segments)
 
