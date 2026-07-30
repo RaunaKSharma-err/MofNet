@@ -7,7 +7,9 @@
     "start": "bunx rork start -p vwrs0342m91kv6g6916uo",
     "start-web": "bunx rork start -p vwrs0342m91kv6g6916uo --web",
     "start-web-dev": "DEBUG=expo* bunx rork start -p vwrs0342m91kv6g6916uo --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
