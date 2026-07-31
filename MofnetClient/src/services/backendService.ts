@@ -41,10 +41,7 @@ async function fetchWithTimeout(
   }
 }
 
-async function postJson<T>(
-  url: string,
-  body: unknown,
-): Promise<T | null> {
+async function postJson<T>(url: string, body: unknown): Promise<T | null> {
   try {
     const response = await fetchWithTimeout(url, {
       method: "POST",
@@ -53,7 +50,11 @@ async function postJson<T>(
     });
     if (!response.ok) return null;
     return (await response.json()) as T;
-  } catch {
+  } catch (error) {
+    console.log("================================");
+    console.log("URL:", url);
+    console.log("ERROR:", error);
+    console.log("================================");
     return null;
   }
 }
@@ -69,10 +70,14 @@ async function getJson<T>(url: string): Promise<T | null> {
 }
 
 export async function checkBackendHealth(): Promise<boolean> {
-  const online = await getJson<{ status?: string }>(`${getApiBaseUrl()}/health`);
+  const online = await getJson<{ status?: string }>(
+    `${getApiBaseUrl()}/health`,
+  );
   if (online?.status === "healthy") return true;
 
-  const offline = await getJson<{ status?: string }>(`${getFallbackApiUrl()}/health`);
+  const offline = await getJson<{ status?: string }>(
+    `${getFallbackApiUrl()}/health`,
+  );
   return offline?.status === "healthy";
 }
 
@@ -120,7 +125,10 @@ export async function askBackend(
     return { content: online.answer, source, confidence };
   }
 
-  const offline = await postJson<AskResponse>(`${getFallbackApiUrl()}/ask`, body);
+  const offline = await postJson<AskResponse>(
+    `${getFallbackApiUrl()}/ask`,
+    body,
+  );
   if (offline) {
     const { source, confidence } = mapSource(offline.sources ?? []);
     return { content: offline.answer, source, confidence };

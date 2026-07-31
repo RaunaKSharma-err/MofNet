@@ -28,9 +28,7 @@
         "backgroundColor": "#ffffff"
       },
       "package": "app.rork.vwrs0342m91kv6g6916uo",
-      "networkSecurityConfig": {
-        "cleartextTraffic": true
-      }
+      "usesCleartextTraffic": true
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -49,7 +47,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "http://192.168.254.6:8000",
+      "apiUrl": "http://192.168.4.2:8000",
       "router": {
         "origin": "https://rork.com/"
       },
