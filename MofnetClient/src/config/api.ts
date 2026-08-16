@@ -1,8 +1,8 @@
-export const ONLINE_API_URL = "http://192.168.254.9:8000";
+export const ONLINE_API_URL = "http://192.168.254.5:8000";
 export const OFFLINE_API_URL = "http://192.168.4.2:8000";
 
 export function getApiBaseUrl(): string {
-  return OFFLINE_API_URL;
+  return ONLINE_API_URL;
 }
 
 export function getFallbackApiUrl(): string {

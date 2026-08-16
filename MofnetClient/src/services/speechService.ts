@@ -5,23 +5,27 @@ import { getApiBaseUrl } from '@/src/config/api';
 
 const RECORDING_OPTIONS = {
   android: {
-    extension: '.m4a',
-    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-    audioEncoder: Audio.AndroidAudioEncoder.AAC,
+    extension: '.wav',
+    outputFormat: Audio.AndroidOutputFormat.DEFAULT,
+    audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
     sampleRate: 16000,
     numberOfChannels: 1,
     bitRate: 64000,
   },
   ios: {
-    extension: '.m4a',
-    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+    extension: '.wav',
+    outputFormat: Audio.IOSOutputFormat.LINEARPCM,
     audioQuality: Audio.IOSAudioQuality.HIGH,
     sampleRate: 16000,
     numberOfChannels: 1,
     bitRate: 64000,
+    audioBitRate: 16,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
   },
   web: {
-    mimeType: 'audio/webm',
+    mimeType: 'audio/wav',
     bitsPerSecond: 64000,
   },
 };
@@ -133,4 +137,113 @@ export async function voiceChat(audioUri: string, grade?: number, subject?: stri
   }
 
   return response.json();
+}
+
+export async function voiceChatStream(
+  audioUri: string,
+  grade?: number,
+  subject?: string,
+  onChunk?: (chunk: string) => void,
+  onComplete?: (answer: string, transcription: string, cached: boolean) => void,
+  onError?: (error: string) => void,
+): Promise<void> {
+  const baseUrl = getApiBaseUrl();
+
+  const formData = new FormData();
+  formData.append('file', {
+    uri: Platform.OS === 'web' ? audioUri : audioUri,
+    type: 'audio/wav',
+    name: 'recording.wav',
+  } as any);
+
+  const params = new URLSearchParams();
+  if (grade) params.set('grade', String(grade));
+  if (subject) params.set('subject', subject);
+
+  const urls = [baseUrl, getFallbackApiUrl()];
+  let lastError = '';
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(`${url}/speech/chat/stream?${params.toString()}`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        continue;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        lastError = 'No readable stream';
+        continue;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let transcription = '';
+      let answer = '';
+      let cached = false;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const jsonStr = trimmed.slice(6);
+            try {
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.error) {
+                if (onError) onError(parsed.error);
+                return;
+              }
+              if (parsed.transcription && !transcription) {
+                transcription = parsed.transcription;
+              }
+              if (parsed.cached !== undefined) {
+                cached = parsed.cached;
+              }
+              if (parsed.chunk) {
+                answer += parsed.chunk;
+                if (onChunk) onChunk(parsed.chunk);
+              }
+              if (parsed.done) {
+                if (onComplete) onComplete(answer, transcription, cached);
+                return;
+              }
+            } catch {
+              continue;
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      return;
+    } catch (err) {
+      lastError = String(err);
+      continue;
+    }
+  }
+
+  const fallback = await voiceChat(audioUri, grade, subject);
+  if (fallback) {
+    if (onComplete) onComplete(fallback.answer, fallback.transcription, false);
+    return;
+  }
+
+  if (onError) onError(lastError || 'Voice chat failed');
 }

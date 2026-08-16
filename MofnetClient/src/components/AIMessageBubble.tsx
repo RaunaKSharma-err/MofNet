@@ -254,6 +254,7 @@ export const AIMessageBubble: React.FC<AIMessageBubbleProps> = ({
 
         {message.source && !isStreaming && (
           <View style={{ marginTop: 8 }}>
+            <ModeBadge mode={message.mode} theme={theme} />
             <SourceCardInline
               source={message.source}
               confidence={message.confidence}
@@ -493,6 +494,34 @@ const ActionChip: React.FC<{
   );
 };
 
+const ModeBadge: React.FC<{
+  mode?: 'curriculum' | 'general' | 'safety';
+  theme: any;
+}> = ({ mode, theme }) => {
+  if (!mode) return null;
+
+  const config = {
+    curriculum: { label: "📚 Curriculum", color: theme.colors.accent },
+    general: { label: "🌐 General Knowledge", color: theme.colors.textSecondary },
+    safety: { label: "⚠️ Safety", color: theme.colors.error },
+  };
+
+  const { label, color } = config[mode] || config.general;
+
+  return (
+    <View
+      style={[
+        styles.modeBadge,
+        { backgroundColor: color + "15", borderColor: color + "40" },
+      ]}
+    >
+      <Text style={[styles.modeBadgeText, { color }]}>
+        {label}
+      </Text>
+    </View>
+  );
+};
+
 const SourceCardInline: React.FC<{
   source: any;
   confidence?: number;
@@ -678,6 +707,19 @@ const styles = StyleSheet.create({
     padding: 10,
     borderWidth: 1,
     maxWidth: "88%",
+  },
+  modeBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginBottom: 6,
+  },
+  modeBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   sourceHeader: {
     flexDirection: "row",

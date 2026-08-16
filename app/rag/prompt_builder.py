@@ -3,9 +3,15 @@ from app.rag.models import LLMMessage, RAGContext, RetrievedChunk
 
 class PromptBuilder:
     SYSTEM_PROMPT = (
-        "You are MofNet AI, a teacher for Nepal school students. "
-        "Answer using ONLY the curriculum context provided. "
-        "If the context lacks sufficient information, say so honestly."
+        "You are a Nepal curriculum tutor. "
+        "Answer using ONLY the curriculum context below. "
+        "Do NOT use external knowledge. "
+        "Do NOT invent facts or examples. "
+        "If the context contains relevant information, provide a complete answer. "
+        "If the context is completely unrelated to the question, say exactly: "
+        "'The provided curriculum context does not contain enough information to answer this question.' "
+        "Structure: definition - explanation - example (only if context provides one). "
+        "Be descriptive and educational."
     )
 
     LANGUAGE_INSTRUCTIONS = {
@@ -14,13 +20,19 @@ class PromptBuilder:
     }
 
     def build_messages(self, context: RAGContext) -> list[LLMMessage]:
-        language_instruction = self.LANGUAGE_INSTRUCTIONS.get(context.language, "Respond in English.")
-        system_content = f"{self.SYSTEM_PROMPT}\n\n{language_instruction}"
+        language_instruction = self.LANGUAGE_INSTRUCTIONS.get(
+            context.language, "Respond in English."
+        )
+        system_content = (
+            f"{self.SYSTEM_PROMPT}\n\n{language_instruction}"
+        )
 
         if context.grade:
-            system_content += f"\nThe student is in Grade {context.grade}."
+            system_content += f"\nGrade: {context.grade}."
         if context.subject:
-            system_content += f"\nSubject: {context.subject.replace('_', ' ').title()}."
+            system_content += (
+                f"\nSubject: {context.subject.replace('_', ' ').title()}."
+            )
 
         user_content = self._build_user_prompt(context.question, context.chunks)
         return [
@@ -38,12 +50,13 @@ class PromptBuilder:
 
         context_parts: list[str] = []
         for chunk in chunks:
-            header = f"[Grade {chunk.grade} | {chunk.subject.replace('_', ' ').title()} | {chunk.title}]"
-            context_parts.append(f"{header}\n{chunk.text}")
+            context_parts.append(chunk.text)
 
         context_text = "\n---\n".join(context_parts)
         return (
-            f"Context:\n{context_text}\n\n"
+            "Curriculum context (use ONLY this):\n"
+            f"{context_text}\n\n"
             f"Question: {question}\n\n"
-            "Answer using only the context above."
+            "Answer using ONLY the context above. "
+            "If the context does not contain the answer, say so explicitly."
         )

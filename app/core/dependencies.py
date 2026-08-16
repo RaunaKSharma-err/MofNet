@@ -1,10 +1,8 @@
 from functools import lru_cache
 
 from app.config.settings import Settings, get_settings
-from app.infrastructure.embeddings.ollama import OllamaEmbeddingProvider
 from app.infrastructure.embeddings.local import LocalEmbeddingProvider
 from app.infrastructure.llm.ollama import OllamaLLMProvider
-from app.infrastructure.llm.openrouter import OpenRouterLLMProvider
 from app.infrastructure.vector_store.chroma_store import ChromaVectorStore
 from app.rag.chunker import CurriculumChunker
 from app.rag.ingestion import CurriculumIngestionPipeline
@@ -20,17 +18,11 @@ def get_embedding_provider():
     return LocalEmbeddingProvider()
 
 
-# @lru_cache
-# def get_llm_provider():
-#     settings = get_settings()
-#     if settings.llm_provider == "ollama":
-#         return OllamaLLMProvider(settings)
-#     return OpenRouterLLMProvider(settings)
-
 @lru_cache
 def get_llm_provider():
     settings = get_settings()
     return OllamaLLMProvider(settings)
+
 
 @lru_cache
 def get_vector_store() -> ChromaVectorStore:

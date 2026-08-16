@@ -18,8 +18,10 @@ class WhisperSpeechProvider(SpeechProvider):
         segments, _info = self.model.transcribe(
             audio_path,
             task="translate",
-            beam_size=5,
-            best_of=5,
+            beam_size=3,
+            best_of=3,
+            vad_filter=True,
+            condition_on_previous_text=False,
         )
         return "".join(segment.text for segment in segments)
 

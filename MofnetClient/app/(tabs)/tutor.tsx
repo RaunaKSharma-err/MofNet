@@ -38,7 +38,7 @@ import {
   createAssistantMessage,
   streamAIResponse,
 } from "@/src/services/aiService";
-import { voiceChat } from "@/src/services/speechService";
+import { voiceChat, voiceChatStream } from "@/src/services/speechService";
 import type { ChatMessage } from "@/src/types";
 
 const suggestedQuestions = [
@@ -111,6 +111,8 @@ export default function TutorScreen() {
       addMessage(sessionId, assistantMsg);
       setStreaming(true);
 
+      console.log("[TUTOR DEBUG] Calling streamAIResponse for:", content);
+
       await streamAIResponse(
         content,
         (chunk) => {
@@ -129,6 +131,7 @@ export default function TutorScreen() {
             source: response.source,
             confidence: response.confidence,
             status: "sent",
+            mode: response.mode,
           });
           setStreaming(false);
           triggerHaptic("success");
@@ -579,108 +582,126 @@ const VoiceModeOverlay: React.FC<{ onClose: () => void; theme: any }> = ({
      };
    }, []);
 
-   const startRecording = async () => {
-    try {
-      const permission = await Audio.requestPermissionsAsync();
-      if (!permission.granted) return;
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        playThroughEarpieceAndroid: false,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-      });
-
-      recordingRef.current = new Audio.Recording();
-      await recordingRef.current.prepareToRecordAsync({
-        android: {
-          extension: ".m4a",
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 64000,
-        },
-        ios: {
-          extension: ".m4a",
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 64000,
-        },
-        web: {
-          mimeType: "audio/webm",
-          bitsPerSecond: 64000,
-        },
-      });
-       await recordingRef.current.startAsync();
-     } catch {
-     }
-   };
-
-   const stopAndProcess = useCallback(async () => {
+    const startRecording = async () => {
      try {
-       if (!recordingRef.current) return;
+       const permission = await Audio.requestPermissionsAsync();
+       if (!permission.granted) return;
 
-       await recordingRef.current.stopAndUnloadAsync();
-       const uri = recordingRef.current.getURI();
-       recordingRef.current = null;
-       setIsProcessing(true);
+       await Audio.setAudioModeAsync({
+         allowsRecordingIOS: true,
+         playsInSilentModeIOS: true,
+         playThroughEarpieceAndroid: false,
+         staysActiveInBackground: false,
+         shouldDuckAndroid: true,
+       });
 
-      if (!uri) {
+       recordingRef.current = new Audio.Recording();
+       await recordingRef.current.prepareToRecordAsync({
+         android: {
+           extension: ".wav",
+           outputFormat: Audio.AndroidOutputFormat.DEFAULT,
+           audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
+           sampleRate: 16000,
+           numberOfChannels: 1,
+           bitRate: 64000,
+         },
+         ios: {
+           extension: ".wav",
+           outputFormat: Audio.IOSOutputFormat.LINEARPCM,
+           audioQuality: Audio.IOSAudioQuality.HIGH,
+           sampleRate: 16000,
+           numberOfChannels: 1,
+           bitRate: 64000,
+           audioBitRate: 16,
+           linearPCMBitDepth: 16,
+           linearPCMIsBigEndian: false,
+           linearPCMIsFloat: false,
+         },
+         web: {
+           mimeType: "audio/wav",
+           bitsPerSecond: 64000,
+         },
+       });
+        await recordingRef.current.startAsync();
+      } catch {
+      }
+    };
+
+    const stopAndProcess = useCallback(async () => {
+      try {
+        if (!recordingRef.current) return;
+
+        await recordingRef.current.stopAndUnloadAsync();
+        const uri = recordingRef.current.getURI();
+        recordingRef.current = null;
+        setIsProcessing(true);
+
+        if (!uri) {
+          setIsProcessing(false);
+          onClose();
+          return;
+        }
+
+        const sessionId = useChatStore.getState().activeSessionId;
+        const sid = sessionId || useChatStore.getState().createSession();
+
+        const userMsg = createUserMessage("");
+        useChatStore.getState().addMessage(sid, userMsg);
+
+        const assistantMsg = createAssistantMessage();
+        useChatStore.getState().addMessage(sid, assistantMsg);
+        useChatStore.getState().setStreaming(true);
+
+        let transcription = "";
+        let answer = "";
+        let cached = false;
+        let streamFailed = false;
+
+        await voiceChatStream(
+          uri,
+          undefined,
+          undefined,
+          (chunk: string) => {
+            answer += chunk;
+            useChatStore.getState().updateMessage(sid, assistantMsg.id, {
+              content: answer,
+            });
+          },
+          (fullAnswer: string, fullTranscription: string, isCached: boolean) => {
+            transcription = fullTranscription;
+            answer = fullAnswer;
+            cached = isCached;
+          },
+          (error: string) => {
+            streamFailed = true;
+          },
+        );
+
         setIsProcessing(false);
         onClose();
-        return;
+
+        if (streamFailed) {
+          return;
+        }
+
+        useChatStore.getState().updateMessage(sid, assistantMsg.id, {
+          content: answer,
+          source: {
+            grade: "Grade 7",
+            subject: "Curriculum",
+            chapter: "Voice Chat",
+            chapterNumber: 0,
+          },
+          confidence: cached ? 95 : 85,
+          status: "sent",
+        });
+        useChatStore.getState().setStreaming(false);
+        triggerHaptic("success");
+      } catch {
+        setIsProcessing(false);
+        onClose();
       }
-
-      const result = await voiceChat(uri);
-      setTranscript(result.transcription);
-      onClose();
-
-       const userMsg = createUserMessage(result.transcription);
-       const sessionId = useChatStore.getState().activeSessionId;
-       const sid = sessionId || useChatStore.getState().createSession();
-
-      useChatStore.getState().addMessage(sid, userMsg);
-
-      const assistantMsg = createAssistantMessage();
-      useChatStore.getState().addMessage(sid, assistantMsg);
-      useChatStore.getState().setStreaming(true);
-
-      await streamAIResponse(
-        result.transcription,
-        (chunk) => {
-          useChatStore.getState().updateMessage(sid, assistantMsg.id, {
-            content:
-              (useChatStore
-                .getState()
-                .sessions.find((s) => s.id === sid)
-                ?.messages.find((m) => m.id === assistantMsg.id)?.content ||
-                "") + chunk,
-          });
-        },
-        (response) => {
-          useChatStore
-            .getState()
-            .updateMessage(sid, assistantMsg.id, {
-              content: response.content,
-              source: response.source,
-              confidence: response.confidence,
-              status: "sent",
-            });
-          useChatStore.getState().setStreaming(false);
-          triggerHaptic("success");
-        },
-      );
-
-       triggerHaptic("success");
-     } catch {
-       setIsProcessing(false);
-       onClose();
-     }
-   }, [onClose]);
+    }, [onClose]);
 
   useEffect(() => {
     orbScale.value = withRepeat(

@@ -27,6 +27,7 @@ export interface ChatMessage {
   confidence?: number;
   bookmarked?: boolean;
   translated?: string;
+  mode?: 'curriculum' | 'general' | 'safety';
 }
 
 export interface ChatSource {

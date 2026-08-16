@@ -33,6 +33,7 @@ class RetrievalResult:
     query: str
     chunks: list[RetrievedChunk] = field(default_factory=list)
     retrieval_duration_ms: int = 0
+    embedding_duration_ms: int = 0
 
     @property
     def avg_relevance_score(self) -> float | None:

@@ -22,10 +22,24 @@ export interface BackendSource {
 export interface AskResponse {
   answer: string;
   latency_ms: number;
+  cached: boolean;
   sources: BackendSource[];
+  mode?: string;
+  model?: string;
+  top_score?: number;
 }
 
-const REQUEST_TIMEOUT_MS = 60000;
+export interface StreamChunk {
+  chunk: string;
+  done: boolean;
+  answer?: string;
+  latency_ms?: number;
+  error?: string;
+  mode?: string;
+  model?: string;
+}
+
+const REQUEST_TIMEOUT_MS = 120000;
 
 async function fetchWithTimeout(
   url: string,
@@ -119,14 +133,14 @@ export async function askBackend(
     language: request.language ?? "en",
   };
 
-  const online = await postJson<AskResponse>(`${getApiBaseUrl()}/ask`, body);
+  const online = await postJson<AskResponse>(`${getApiBaseUrl()}/ask?stream=false`, body);
   if (online) {
     const { source, confidence } = mapSource(online.sources ?? []);
     return { content: online.answer, source, confidence };
   }
 
   const offline = await postJson<AskResponse>(
-    `${getFallbackApiUrl()}/ask`,
+    `${getFallbackApiUrl()}/ask?stream=false`,
     body,
   );
   if (offline) {
@@ -134,5 +148,108 @@ export async function askBackend(
     return { content: offline.answer, source, confidence };
   }
 
+  return null;
+}
+
+export async function streamAskBackend(
+  request: AskRequest,
+  onChunk: (chunk: string) => void,
+  onComplete?: (content: string, latencyMs: number) => void,
+  onError?: (error: string) => void,
+): Promise<string | null> {
+  const body = {
+    question: request.question,
+    grade: request.grade ?? null,
+    subject: request.subject ?? null,
+    language: request.language ?? "en",
+  };
+
+  const urls = [getApiBaseUrl()];
+  let lastError = "";
+
+  for (const baseUrl of urls) {
+    try {
+      const url = `${baseUrl}/ask?stream=true`;
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        120000,
+      );
+
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        continue;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        lastError = "No readable stream";
+        break;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullContent = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data: ")) continue;
+            const jsonStr = trimmed.slice(6);
+            try {
+              const parsed: StreamChunk = JSON.parse(jsonStr);
+              if (parsed.error) {
+                if (onError) onError(parsed.error);
+                return null;
+              }
+              if (parsed.chunk) {
+                fullContent += parsed.chunk;
+                onChunk(parsed.chunk);
+              }
+              if (parsed.done) {
+                if (onComplete) {
+                  onComplete(parsed.answer ?? fullContent, parsed.latency_ms ?? 0);
+                }
+                return fullContent;
+              }
+            } catch {
+              continue;
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      if (fullContent) {
+        return fullContent;
+      }
+      return null;
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("AbortError") || msg.includes("Aborted")) {
+        lastError = msg;
+        continue;
+      }
+      lastError = msg;
+      continue;
+    }
+  }
+
+  if (onError) {
+    onError(lastError || "Stream request failed");
+  }
   return null;
 }

@@ -1,11 +1,12 @@
 import type { ChatSource, ChatMessage, Language } from "@/src/types";
 import { generateId } from "@/src/store/chatStore";
-import { askBackend } from "@/src/services/backendService";
+import { askBackend, streamAskBackend } from "@/src/services/backendService";
 
 interface AIResponse {
   content: string;
   source: ChatSource;
   confidence: number;
+  mode?: 'curriculum' | 'general' | 'safety';
 }
 
 export interface AskOptions {
@@ -175,7 +176,11 @@ export const generateAIResponse = async (
   });
 
   if (fromBackend) {
-    return fromBackend;
+    return {
+      content: fromBackend.content,
+      source: fromBackend.source,
+      confidence: fromBackend.confidence,
+    };
   }
 
   return fallbackResponse(question);
@@ -200,16 +205,54 @@ export const streamAIResponse = async (
   onComplete: (response: AIResponse) => void,
   options?: AskOptions,
 ): Promise<void> => {
-  const fromBackend = await askBackend({
+  console.log("[AI DEBUG] streamAIResponse called for:", question);
+  let streamedContent = await streamAskBackend(
+    {
+      question,
+      grade: options?.grade,
+      subject: options?.subject,
+      language: options?.language,
+    },
+    (chunk: string) => {
+      onChunk(chunk);
+    },
+    (_content: string, _latencyMs: number) => {
+    },
+    (_error: string) => {
+    },
+  );
+
+  if (streamedContent) {
+    const source: ChatSource = {
+      grade: "Grade 7",
+      subject: "Curriculum",
+      chapter: "RAG Pipeline",
+      chapterNumber: 0,
+    };
+    onComplete({
+      content: streamedContent,
+      source,
+      confidence: 85,
+      mode: "curriculum",
+    });
+    return;
+  }
+
+  const fallback = await askBackend({
     question,
     grade: options?.grade,
     subject: options?.subject,
     language: options?.language,
   });
 
-  if (fromBackend) {
-    await streamText(fromBackend.content, onChunk, 18);
-    onComplete(fromBackend);
+  if (fallback) {
+    await streamText(fallback.content, onChunk, 35);
+    onComplete({
+      content: fallback.content,
+      source: fallback.source,
+      confidence: fallback.confidence,
+      mode: "curriculum",
+    });
     return;
   }
 

@@ -28,32 +28,36 @@ class ContextRetriever:
         grade: int | None = None,
         subject: str | None = None,
     ) -> RetrievalResult:
-        start = time.perf_counter()
+        total_start = time.perf_counter()
 
         try:
+            emb_start = time.perf_counter()
             query_embedding = self._embedding_provider.embed_query(question)
+            emb_elapsed = time.perf_counter() - emb_start
+
             where = self._build_filter(grade=grade, subject=subject)
             raw_chunks = self._vector_store.query(
                 embedding=query_embedding,
                 top_k=self._settings.rag_top_k,
                 where=where,
             )
-            filtered = self._filter_by_score(raw_chunks)
-            deduped = self._dedup_chunks(filtered)
-            duration_ms = int((time.perf_counter() - start) * 1000)
+
+            deduped = self._dedup_chunks(raw_chunks)
+            ranked = self._rank_by_relevance(deduped)
+            duration_ms = int((time.perf_counter() - total_start) * 1000)
 
             logger.info(
-                "Retrieved %d chunks (filtered from %d, deduped from %d) in %dms",
-                len(deduped),
+                "Retrieved %d chunks (from %d raw) in %dms",
+                len(ranked),
                 len(raw_chunks),
-                len(filtered),
                 duration_ms,
             )
 
             return RetrievalResult(
                 query=question,
-                chunks=deduped,
+                chunks=ranked,
                 retrieval_duration_ms=duration_ms,
+                embedding_duration_ms=int(emb_elapsed * 1000),
             )
         except RetrievalError:
             raise
@@ -66,36 +70,26 @@ class ContextRetriever:
         grade: int | None,
         subject: str | None,
     ) -> dict[str, Any] | None:
+        conditions: list[dict[str, Any]] = []
+        if grade is not None:
+            conditions.append({"grade": grade})
+        if subject is not None:
+            conditions.append({"subject": subject})
+        if len(conditions) == 1:
+            return conditions[0]
+        if len(conditions) > 1:
+            return {"$and": conditions}
         return None
 
     def _dedup_chunks(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
         seen_texts: set[str] = set()
         result: list[RetrievedChunk] = []
         for chunk in chunks:
-            normalized = chunk.text.strip().lower()
+            normalized = " ".join(chunk.text.split()).lower()
             if normalized not in seen_texts:
                 seen_texts.add(normalized)
                 result.append(chunk)
         return result
 
-    def _filter_by_score(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-        filtered = [
-            chunk
-            for chunk in chunks
-            if chunk.relevance_score >= self._settings.rag_min_score
-        ]
-        return [
-            RetrievedChunk(
-                chroma_id=chunk.chroma_id,
-                document_id=chunk.document_id,
-                text=chunk.text,
-                title=chunk.title,
-                subject=chunk.subject,
-                grade=chunk.grade,
-                chapter=chunk.chapter,
-                source_file=chunk.source_file,
-                relevance_score=chunk.relevance_score,
-                rank=new_rank,
-            )
-            for new_rank, chunk in enumerate(filtered, start=1)
-        ]
+    def _rank_by_relevance(self, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        return sorted(chunks, key=lambda c: c.relevance_score, reverse=True)
