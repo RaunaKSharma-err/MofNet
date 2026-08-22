@@ -180,6 +180,7 @@ export const generateAIResponse = async (
       content: fromBackend.content,
       source: fromBackend.source,
       confidence: fromBackend.confidence,
+      mode: fromBackend.mode,
     };
   }
 
@@ -206,7 +207,7 @@ export const streamAIResponse = async (
   options?: AskOptions,
 ): Promise<void> => {
   console.log("[AI DEBUG] streamAIResponse called for:", question);
-  let streamedContent = await streamAskBackend(
+  const streamResult = await streamAskBackend(
     {
       question,
       grade: options?.grade,
@@ -216,13 +217,13 @@ export const streamAIResponse = async (
     (chunk: string) => {
       onChunk(chunk);
     },
-    (_content: string, _latencyMs: number) => {
+    (_content: string, _latencyMs: number, _mode?: string, _model?: string) => {
     },
     (_error: string) => {
     },
   );
 
-  if (streamedContent) {
+  if (streamResult) {
     const source: ChatSource = {
       grade: "Grade 7",
       subject: "Curriculum",
@@ -230,10 +231,10 @@ export const streamAIResponse = async (
       chapterNumber: 0,
     };
     onComplete({
-      content: streamedContent,
+      content: streamResult.content,
       source,
       confidence: 85,
-      mode: "curriculum",
+      mode: streamResult.mode,
     });
     return;
   }
@@ -251,7 +252,7 @@ export const streamAIResponse = async (
       content: fallback.content,
       source: fallback.source,
       confidence: fallback.confidence,
-      mode: "curriculum",
+      mode: fallback.mode,
     });
     return;
   }

@@ -125,7 +125,7 @@ function mapSource(sources: BackendSource[]): {
 
 export async function askBackend(
   request: AskRequest,
-): Promise<{ content: string; source: ChatSource; confidence: number } | null> {
+): Promise<{ content: string; source: ChatSource; confidence: number; mode?: string; model?: string } | null> {
   const body = {
     question: request.question,
     grade: request.grade ?? null,
@@ -136,7 +136,7 @@ export async function askBackend(
   const online = await postJson<AskResponse>(`${getApiBaseUrl()}/ask?stream=false`, body);
   if (online) {
     const { source, confidence } = mapSource(online.sources ?? []);
-    return { content: online.answer, source, confidence };
+    return { content: online.answer, source, confidence, mode: online.mode, model: online.model };
   }
 
   const offline = await postJson<AskResponse>(
@@ -145,18 +145,24 @@ export async function askBackend(
   );
   if (offline) {
     const { source, confidence } = mapSource(offline.sources ?? []);
-    return { content: offline.answer, source, confidence };
+    return { content: offline.answer, source, confidence, mode: offline.mode, model: offline.model };
   }
 
   return null;
 }
 
+export interface StreamResult {
+  content: string;
+  mode?: string;
+  model?: string;
+}
+
 export async function streamAskBackend(
   request: AskRequest,
   onChunk: (chunk: string) => void,
-  onComplete?: (content: string, latencyMs: number) => void,
+  onComplete?: (content: string, latencyMs: number, mode?: string, model?: string) => void,
   onError?: (error: string) => void,
-): Promise<string | null> {
+): Promise<StreamResult | null> {
   const body = {
     question: request.question,
     grade: request.grade ?? null,
@@ -194,6 +200,8 @@ export async function streamAskBackend(
       const decoder = new TextDecoder();
       let buffer = "";
       let fullContent = "";
+      let streamMode: string | undefined;
+      let streamModel: string | undefined;
 
       try {
         while (true) {
@@ -218,11 +226,17 @@ export async function streamAskBackend(
                 fullContent += parsed.chunk;
                 onChunk(parsed.chunk);
               }
+              if (parsed.mode) {
+                streamMode = parsed.mode;
+              }
+              if (parsed.model) {
+                streamModel = parsed.model;
+              }
               if (parsed.done) {
                 if (onComplete) {
-                  onComplete(parsed.answer ?? fullContent, parsed.latency_ms ?? 0);
+                  onComplete(parsed.answer ?? fullContent, parsed.latency_ms ?? 0, streamMode, streamModel);
                 }
-                return fullContent;
+                return { content: fullContent, mode: streamMode, model: streamModel };
               }
             } catch {
               continue;
@@ -234,7 +248,7 @@ export async function streamAskBackend(
       }
 
       if (fullContent) {
-        return fullContent;
+        return { content: fullContent, mode: streamMode, model: streamModel };
       }
       return null;
     } catch (err) {

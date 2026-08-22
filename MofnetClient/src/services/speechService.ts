@@ -1,13 +1,13 @@
 import { Platform } from 'react-native';
 import { Audio } from 'expo-av';
 
-import { getApiBaseUrl } from '@/src/config/api';
+import { getApiBaseUrl, getFallbackApiUrl } from '@/src/config/api';
 
 const RECORDING_OPTIONS = {
   android: {
     extension: '.wav',
-    outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-    audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
+    outputFormat: Audio.AndroidOutputFormat.WAV,
+    audioEncoder: Audio.AndroidAudioEncoder.PCM_16BIT,
     sampleRate: 16000,
     numberOfChannels: 1,
     bitRate: 64000,
@@ -80,9 +80,58 @@ export async function stopRecording(): Promise<string> {
   }
 }
 
+async function readFileAsBase64(uri: string): Promise<string> {
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function xhrPostWithTimeout(
+  url: string,
+  body: FormData,
+  timeoutMs = 120000,
+): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+
+    const timeout = setTimeout(() => {
+      xhr.abort();
+      reject(new Error('Request timed out'));
+    }, timeoutMs);
+
+    xhr.onload = () => {
+      clearTimeout(timeout);
+      resolve({
+        status: xhr.status,
+        text: xhr.responseText,
+      });
+    };
+
+    xhr.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error(`Network error: ${xhr.statusText || 'unknown'}`));
+    };
+
+    xhr.ontimeout = () => {
+      reject(new Error('Request timed out'));
+    };
+
+    xhr.send(body);
+  });
+}
+
 export async function transcribeAudio(audioUri: string): Promise<string> {
   const baseUrl = getApiBaseUrl();
-
   const formData = new FormData();
   formData.append('file', {
     uri: Platform.OS === 'web' ? audioUri : audioUri,
@@ -90,19 +139,13 @@ export async function transcribeAudio(audioUri: string): Promise<string> {
     name: 'recording.wav',
   } as any);
 
-  const response = await fetch(`${baseUrl}/speech/transcribe`, {
-    method: 'POST',
-    body: formData,
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
+  const result = await xhrPostWithTimeout(`${baseUrl}/speech/transcribe`, formData);
 
-  if (!response.ok) {
-    throw new Error(`Transcription failed: ${response.status}`);
+  if (result.status !== 200) {
+    throw new Error(`Transcription failed: ${result.status}`);
   }
 
-  const data = await response.json();
+  const data = JSON.parse(result.text);
   return data.text || '';
 }
 
@@ -112,7 +155,6 @@ export async function voiceChat(audioUri: string, grade?: number, subject?: stri
   audioUrl?: string;
 }> {
   const baseUrl = getApiBaseUrl();
-
   const formData = new FormData();
   formData.append('file', {
     uri: Platform.OS === 'web' ? audioUri : audioUri,
@@ -122,21 +164,15 @@ export async function voiceChat(audioUri: string, grade?: number, subject?: stri
 
   const params = new URLSearchParams();
   if (grade) params.set('grade', String(grade));
-  if (subject) params.set('subject', subject);
+  if (subject) params.set('subject', String(subject));
 
-  const response = await fetch(`${baseUrl}/speech/chat?${params.toString()}`, {
-    method: 'POST',
-    body: formData,
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
+  const result = await xhrPostWithTimeout(`${baseUrl}/speech/chat?${params.toString()}`, formData);
 
-  if (!response.ok) {
-    throw new Error(`Voice chat failed: ${response.status}`);
+  if (result.status !== 200) {
+    throw new Error(`Voice chat failed: ${result.status}`);
   }
 
-  return response.json();
+  return JSON.parse(result.text);
 }
 
 export async function voiceChatStream(
@@ -148,102 +184,93 @@ export async function voiceChatStream(
   onError?: (error: string) => void,
 ): Promise<void> {
   const baseUrl = getApiBaseUrl();
+  console.log('[VOICE] voiceChatStream starting, audioUri:', audioUri, 'baseUrl:', baseUrl);
 
-  const formData = new FormData();
-  formData.append('file', {
-    uri: Platform.OS === 'web' ? audioUri : audioUri,
-    type: 'audio/wav',
-    name: 'recording.wav',
-  } as any);
+  const buildUrl = (base: string) => {
+    const p = new URLSearchParams();
+    if (grade) p.set('grade', String(grade));
+    if (subject) p.set('subject', String(subject));
+    return `${base}/speech/chat/stream?${p.toString()}`;
+  };
 
-  const params = new URLSearchParams();
-  if (grade) params.set('grade', String(grade));
-  if (subject) params.set('subject', subject);
+  const buildFormData = () => {
+    const fd = new FormData();
+    fd.append('file', {
+      uri: Platform.OS === 'web' ? audioUri : audioUri,
+      type: 'audio/wav',
+      name: 'recording.wav',
+    } as any);
+    return fd;
+  };
 
   const urls = [baseUrl, getFallbackApiUrl()];
   let lastError = '';
 
   for (const url of urls) {
     try {
-      const response = await fetch(`${url}/speech/chat/stream?${params.toString()}`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      console.log('[VOICE] Trying URL:', buildUrl(url));
+      const result = await xhrPostWithTimeout(buildUrl(url), buildFormData(), 180000);
 
-      if (!response.ok) {
-        lastError = `HTTP ${response.status}`;
+      console.log('[VOICE] Response status:', result.status);
+      if (result.status !== 200) {
+        lastError = `HTTP ${result.status}`;
         continue;
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        lastError = 'No readable stream';
-        continue;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const text = result.text;
+      const lines = text.split('\n');
       let transcription = '';
       let answer = '';
       let cached = false;
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data: ')) continue;
-            const jsonStr = trimmed.slice(6);
-            try {
-              const parsed = JSON.parse(jsonStr);
-              if (parsed.error) {
-                if (onError) onError(parsed.error);
-                return;
-              }
-              if (parsed.transcription && !transcription) {
-                transcription = parsed.transcription;
-              }
-              if (parsed.cached !== undefined) {
-                cached = parsed.cached;
-              }
-              if (parsed.chunk) {
-                answer += parsed.chunk;
-                if (onChunk) onChunk(parsed.chunk);
-              }
-              if (parsed.done) {
-                if (onComplete) onComplete(answer, transcription, cached);
-                return;
-              }
-            } catch {
-              continue;
-            }
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const jsonStr = trimmed.slice(6);
+        try {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.error) {
+            console.log('[VOICE] Backend error:', parsed.error);
+            if (onError) onError(parsed.error);
+            return;
           }
+          if (parsed.transcription && !transcription) {
+            console.log('[VOICE] Transcription received:', parsed.transcription);
+            transcription = parsed.transcription;
+          }
+          if (parsed.cached !== undefined) {
+            cached = parsed.cached;
+          }
+          if (parsed.chunk) {
+            answer += parsed.chunk;
+            if (onChunk) onChunk(parsed.chunk);
+          }
+          if (parsed.done) {
+            console.log('[VOICE] Stream complete, answer length:', answer.length);
+            if (onComplete) onComplete(answer, transcription, cached);
+            return;
+          }
+        } catch {
+          continue;
         }
-      } finally {
-        reader.releaseLock();
       }
 
       return;
     } catch (err) {
+      console.log('[VOICE] Request failed for', url, ':', err);
       lastError = String(err);
       continue;
     }
   }
 
+  console.log('[VOICE] All stream URLs failed, trying fallback voiceChat');
   const fallback = await voiceChat(audioUri, grade, subject);
   if (fallback) {
+    console.log('[VOICE] Fallback succeeded:', fallback.answer.slice(0, 50));
     if (onComplete) onComplete(fallback.answer, fallback.transcription, false);
     return;
   }
 
+  console.log('[VOICE] All methods failed, lastError:', lastError);
   if (onError) onError(lastError || 'Voice chat failed');
 }

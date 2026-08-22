@@ -25,7 +25,15 @@ import Animated, {
   FadeInDown,
   Easing,
 } from "react-native-reanimated";
-import { Send, Mic, Paperclip, Sparkles, Plus, Trash2, X } from "lucide-react-native";
+import {
+  Send,
+  Mic,
+  Paperclip,
+  Sparkles,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react-native";
 import * as ExpoSpeech from "expo-speech";
 import { useChatStore } from "@/src/store/chatStore";
 import { useAuthStore } from "@/src/store/authStore";
@@ -76,7 +84,12 @@ export default function TutorScreen() {
 
   const scrollViewRef = useRef<ScrollView>(null);
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-   const messages = activeSession?.messages || [];
+  const messages = activeSession?.messages || [];
+  const streamBufferRef = useRef({
+    content: "",
+    msgId: "" as string | null,
+    sessionId: "" as string | null,
+  });
 
   useEffect(() => {
     if (!activeSessionId && sessions.length === 0) {
@@ -110,6 +123,11 @@ export default function TutorScreen() {
       const assistantMsg = createAssistantMessage();
       addMessage(sessionId, assistantMsg);
       setStreaming(true);
+      streamBufferRef.current = {
+        content: "",
+        msgId: assistantMsg.id,
+        sessionId,
+      };
 
       console.log("[TUTOR DEBUG] Calling streamAIResponse for:", content);
 
@@ -117,12 +135,7 @@ export default function TutorScreen() {
         content,
         (chunk) => {
           updateMessage(sessionId!, assistantMsg.id, {
-            content:
-              (useChatStore
-                .getState()
-                .sessions.find((s) => s.id === sessionId)
-                ?.messages.find((m) => m.id === assistantMsg.id)?.content ||
-                "") + chunk,
+            content: (streamBufferRef.current.content += chunk),
           });
         },
         (response) => {
@@ -253,7 +266,13 @@ export default function TutorScreen() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      style={[
+        styles.container,
+        {
+          backgroundColor: theme.colors.background,
+          paddingBottom: Math.max(insets.bottom + 80, 95),
+        },
+      ]}
     >
       <KeyboardAvoidingView
         behavior="padding"
@@ -314,8 +333,8 @@ export default function TutorScreen() {
                   ]}
                 >
                   {meshStatus === "online"
-                     ? "Connected to MofNet AI"
-                     : "Offline AI • Ready"}
+                    ? "Connected to MofNet AI"
+                    : "Offline AI • Ready"}
                 </Text>
               </View>
             </View>
@@ -400,8 +419,8 @@ export default function TutorScreen() {
           style={[
             styles.inputBar,
             {
-              paddingBottom: 80,
               backgroundColor: theme.colors.background,
+              paddingBottom: Math.max(insets.bottom, 16),
             },
           ]}
         >
@@ -559,6 +578,7 @@ const VoiceModeOverlay: React.FC<{ onClose: () => void; theme: any }> = ({
   onClose,
   theme,
 }) => {
+  const insets = useSafeAreaInsets();
   const orbScale = useSharedValue(1);
   const orbOpacity = useSharedValue(0.8);
   const waveScale = useSharedValue(1);
@@ -566,142 +586,180 @@ const VoiceModeOverlay: React.FC<{ onClose: () => void; theme: any }> = ({
   const dotOpacity = useSharedValue(1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [isRecordingReady, setIsRecordingReady] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
 
-   useEffect(() => {
-     startRecording();
-     return () => {
-       if (recordingRef.current) {
-         recordingRef.current.stopAndUnloadAsync().catch(() => {});
-         recordingRef.current = null;
-       }
-       Audio.setAudioModeAsync({
-         allowsRecordingIOS: false,
-         playsInSilentModeIOS: false,
-       }).catch(() => {});
-     };
-   }, []);
-
-    const startRecording = async () => {
-     try {
-       const permission = await Audio.requestPermissionsAsync();
-       if (!permission.granted) return;
-
-       await Audio.setAudioModeAsync({
-         allowsRecordingIOS: true,
-         playsInSilentModeIOS: true,
-         playThroughEarpieceAndroid: false,
-         staysActiveInBackground: false,
-         shouldDuckAndroid: true,
-       });
-
-       recordingRef.current = new Audio.Recording();
-       await recordingRef.current.prepareToRecordAsync({
-         android: {
-           extension: ".wav",
-           outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-           audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-           sampleRate: 16000,
-           numberOfChannels: 1,
-           bitRate: 64000,
-         },
-         ios: {
-           extension: ".wav",
-           outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-           audioQuality: Audio.IOSAudioQuality.HIGH,
-           sampleRate: 16000,
-           numberOfChannels: 1,
-           bitRate: 64000,
-           audioBitRate: 16,
-           linearPCMBitDepth: 16,
-           linearPCMIsBigEndian: false,
-           linearPCMIsFloat: false,
-         },
-         web: {
-           mimeType: "audio/wav",
-           bitsPerSecond: 64000,
-         },
-       });
-        await recordingRef.current.startAsync();
-      } catch {
-      }
-    };
-
-    const stopAndProcess = useCallback(async () => {
-      try {
-        if (!recordingRef.current) return;
-
-        await recordingRef.current.stopAndUnloadAsync();
-        const uri = recordingRef.current.getURI();
+  useEffect(() => {
+    console.log("[VOICE] VoiceModeOverlay mounted, starting recording");
+    startRecording();
+    return () => {
+      setIsRecordingReady(false);
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
         recordingRef.current = null;
-        setIsProcessing(true);
+      }
+      Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: false,
+      }).catch(() => {});
+    };
+  }, []);
 
-        if (!uri) {
-          setIsProcessing(false);
-          onClose();
-          return;
-        }
+   const startRecording = async () => {
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      console.log("[VOICE] Permission result:", permission);
+      if (!permission.granted) {
+        setRecordingError("Microphone permission denied");
+        return;
+      }
 
-        const sessionId = useChatStore.getState().activeSessionId;
-        const sid = sessionId || useChatStore.getState().createSession();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        playThroughEarpieceAndroid: false,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+      });
 
-        const userMsg = createUserMessage("");
-        useChatStore.getState().addMessage(sid, userMsg);
+      recordingRef.current = new Audio.Recording();
+      console.log("[VOICE] Created Audio.Recording, preparing...");
+      await recordingRef.current.prepareToRecordAsync({
+        android: {
+          extension: ".wav",
+          outputFormat: Audio.AndroidOutputFormat.WAV,
+          audioEncoder: Audio.AndroidAudioEncoder.PCM_16BIT,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 64000,
+        },
+        ios: {
+          extension: ".wav",
+          outputFormat: Audio.IOSOutputFormat.LINEARPCM,
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 64000,
+          audioBitRate: 16,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: "audio/wav",
+          bitsPerSecond: 64000,
+        },
+      });
+      console.log("[VOICE] Prepared, starting...");
+      await recordingRef.current.startAsync();
+      console.log("[VOICE] Recording started successfully");
+      setIsRecordingReady(true);
+    } catch (e) {
+      console.log("[VOICE] startRecording failed:", e);
+      setRecordingError("Could not start microphone");
+    }
+  };
 
-        const assistantMsg = createAssistantMessage();
-        useChatStore.getState().addMessage(sid, assistantMsg);
-        useChatStore.getState().setStreaming(true);
+  const stopAndProcess = useCallback(async () => {
+    try {
+      if (!recordingRef.current) {
+        console.log("[VOICE] No recording ref — startRecording probably failed");
+        onClose();
+        return;
+      }
 
-        let transcription = "";
-        let answer = "";
-        let cached = false;
-        let streamFailed = false;
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
+      setIsProcessing(true);
 
-        await voiceChatStream(
-          uri,
-          undefined,
-          undefined,
-          (chunk: string) => {
-            answer += chunk;
-            useChatStore.getState().updateMessage(sid, assistantMsg.id, {
-              content: answer,
-            });
-          },
-          (fullAnswer: string, fullTranscription: string, isCached: boolean) => {
-            transcription = fullTranscription;
-            answer = fullAnswer;
-            cached = isCached;
-          },
-          (error: string) => {
-            streamFailed = true;
-          },
-        );
-
+      if (!uri) {
+        console.log("[VOICE] Empty URI after stopAndUnload");
         setIsProcessing(false);
         onClose();
+        return;
+      }
 
-        if (streamFailed) {
-          return;
-        }
+      console.log("[VOICE] Audio URI:", uri);
+      const sessionId = useChatStore.getState().activeSessionId;
+      const sid = sessionId || useChatStore.getState().createSession();
 
+      const userMsg = createUserMessage("🎤 Voice message");
+      useChatStore.getState().addMessage(sid, userMsg);
+
+      const assistantMsg = createAssistantMessage();
+      useChatStore.getState().addMessage(sid, assistantMsg);
+      useChatStore.getState().setStreaming(true);
+
+      let transcription = "";
+      let answer = "";
+      let cached = false;
+      let streamFailed = false;
+
+      console.log("[VOICE] Calling voiceChatStream...");
+      await voiceChatStream(
+        uri,
+        undefined,
+        undefined,
+        (chunk: string) => {
+          answer += chunk;
+          useChatStore.getState().updateMessage(sid, assistantMsg.id, {
+            content: answer,
+          });
+        },
+        (fullAnswer: string, fullTranscription: string, isCached: boolean) => {
+          console.log("[VOICE] onComplete:", fullTranscription, fullAnswer.slice(0, 50));
+          transcription = fullTranscription;
+          setTranscript(fullTranscription);
+          answer = fullAnswer;
+          cached = isCached;
+        },
+        (error: string) => {
+          console.log("[VOICE] onError:", error);
+          streamFailed = true;
+        },
+      );
+
+      console.log("[VOICE] voiceChatStream returned, streamFailed:", streamFailed);
+      setIsProcessing(false);
+
+      if (streamFailed) {
         useChatStore.getState().updateMessage(sid, assistantMsg.id, {
-          content: answer,
-          source: {
-            grade: "Grade 7",
-            subject: "Curriculum",
-            chapter: "Voice Chat",
-            chapterNumber: 0,
-          },
-          confidence: cached ? 95 : 85,
-          status: "sent",
+          content:
+            "Sorry, I couldn't process your voice message. Please try again.",
+          status: "error",
         });
         useChatStore.getState().setStreaming(false);
-        triggerHaptic("success");
-      } catch {
-        setIsProcessing(false);
-        onClose();
+        triggerHaptic("warning");
+        setTimeout(onClose, 1500);
+        return;
       }
-    }, [onClose]);
+
+      useChatStore.getState().updateMessage(sid, userMsg.id, {
+        content: transcription || "🎤 Voice message",
+      });
+
+      useChatStore.getState().updateMessage(sid, assistantMsg.id, {
+        content: answer,
+        source: {
+          grade: "Grade 7",
+          subject: "Curriculum",
+          chapter: "Voice Chat",
+          chapterNumber: 0,
+        },
+        confidence: cached ? 95 : 85,
+        status: "sent",
+      });
+      useChatStore.getState().setStreaming(false);
+      triggerHaptic("success");
+      setTimeout(onClose, 800);
+    } catch (e) {
+      console.log("[VOICE] stopAndProcess exception:", e);
+      setIsProcessing(false);
+      setTimeout(onClose, 800);
+    }
+  }, [onClose]);
 
   useEffect(() => {
     orbScale.value = withRepeat(
@@ -766,57 +824,88 @@ const VoiceModeOverlay: React.FC<{ onClose: () => void; theme: any }> = ({
       />
       <View style={styles.voiceContainer}>
         <Pressable
-          onPress={isProcessing ? undefined : stopAndProcess}
-          style={[styles.voiceCloseBtn, { opacity: isProcessing ? 0.5 : 0.9 }]}
+          onPress={isProcessing || !isRecordingReady ? undefined : stopAndProcess}
+          style={[
+            styles.voiceCloseBtn,
+            {
+              top: insets.top + 16,
+              opacity: isProcessing || !isRecordingReady ? 0.3 : 0.9,
+            },
+          ]}
         >
           {isProcessing ? (
-            <Text style={styles.closeProcessing}>Sending...</Text>
+            <Text style={styles.closeProcessing}>Processing...</Text>
+          ) : !isRecordingReady ? (
+            <Text style={styles.closeProcessing}>Starting...</Text>
           ) : (
             <X size={28} color="#FF6B6B" strokeWidth={2.5} />
           )}
         </Pressable>
 
         {/* Recording indicator */}
-        <Animated.View style={[styles.recordingIndicator, dotStyle]}>
-          <View style={styles.recordingDot} />
-          <Text style={styles.recordingText}>Recording</Text>
-        </Animated.View>
-
-        {transcript ? (
-          <View style={[styles.transcriptPreview, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
-            <Text style={[styles.transcriptPreviewText, { color: theme.colors.textPrimary }]} numberOfLines={2}>
-              {transcript}
-            </Text>
+        {recordingError ? (
+          <View style={styles.voiceContent}>
+            <Text style={styles.voiceLabel}>Microphone Unavailable</Text>
+            <Text style={styles.voiceSubLabel}>{recordingError}</Text>
           </View>
-        ) : null}
-
-        <View style={styles.voiceContent}>
-          <Text style={styles.voiceLabel}>Listening...</Text>
-           <Text style={styles.voiceSubLabel}>Tap the X to stop and ask</Text>
-
-          <View style={styles.voiceOrbWrap}>
-            <Animated.View style={[styles.voiceWave1, waveStyle]} />
-            <Animated.View style={[styles.voiceOrb, orbStyle]}>
-              <LinearGradient
-                colors={["#17C3B2", "#006989"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.voiceOrbGradient}
-              >
-                <Mic size={48} color="#FFFFFF" strokeWidth={2} />
-              </LinearGradient>
+        ) : (
+          <>
+            <Animated.View style={[styles.recordingIndicator, dotStyle]}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingText}>Recording</Text>
             </Animated.View>
-          </View>
 
-          {/* Waveform */}
-          <View style={styles.waveformWrap}>
-            {Array.from({ length: 28 }).map((_, i) => (
-              <WaveformBar key={i} index={i} />
-            ))}
-          </View>
+            {transcript ? (
+              <View
+                style={[
+                  styles.transcriptPreview,
+                  {
+                    backgroundColor: theme.colors.card,
+                    borderColor: theme.colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.transcriptPreviewText,
+                    { color: theme.colors.textPrimary },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {transcript}
+                </Text>
+              </View>
+            ) : null}
 
-          <Text style={styles.voiceHint}>Speak in English or Nepali</Text>
-        </View>
+            <View style={styles.voiceContent}>
+              <Text style={styles.voiceLabel}>Listening...</Text>
+              <Text style={styles.voiceSubLabel}>Tap the X to stop and ask</Text>
+
+              <View style={styles.voiceOrbWrap}>
+                <Animated.View style={[styles.voiceWave1, waveStyle]} />
+                <Animated.View style={[styles.voiceOrb, orbStyle]}>
+                  <LinearGradient
+                    colors={["#17C3B2", "#006989"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.voiceOrbGradient}
+                  >
+                    <Mic size={48} color="#FFFFFF" strokeWidth={2} />
+                  </LinearGradient>
+                </Animated.View>
+              </View>
+
+              {/* Waveform */}
+              <View style={styles.waveformWrap}>
+                {Array.from({ length: 28 }).map((_, i) => (
+                  <WaveformBar key={i} index={i} />
+                ))}
+              </View>
+
+              <Text style={styles.voiceHint}>Speak in English or Nepali</Text>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -1024,65 +1113,64 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
   // Voice overlay
-   voiceOverlay: {
-     flex: 1,
-     backgroundColor: "#0A1014",
-   },
-   voiceContainer: {
-     flex: 1,
-     position: "relative",
-   },
-   recordingIndicator: {
-     flexDirection: "row",
-     alignItems: "center",
-     justifyContent: "center",
-     gap: 8,
-     paddingTop: 60,
-   },
-   recordingDot: {
-     width: 8,
-     height: 8,
-     borderRadius: 4,
-     backgroundColor: "#FF4444",
-   },
-   recordingText: {
-     color: "#FF6B6B",
-     fontSize: 12,
-     fontWeight: "600",
-     letterSpacing: 1,
-   },
-   voiceCloseBtn: {
-     position: "absolute",
-     top: 50,
-     left: 20,
-     width: 52,
-     height: 52,
-     borderRadius: 26,
-     backgroundColor: "rgba(255,60,60,0.2)",
-     alignItems: "center",
-     justifyContent: "center",
-     zIndex: 10,
-     borderWidth: 1.5,
-     borderColor: "rgba(255,107,107,0.4)",
-   },
-   closeProcessing: {
-     color: "#FF6B6B",
-     fontSize: 11,
-     fontWeight: "700",
-   },
-   transcriptPreview: {
-     paddingHorizontal: 16,
-     paddingVertical: 10,
-     borderRadius: 12,
-     borderWidth: 1,
-     marginHorizontal: 24,
-     marginBottom: 8,
-   },
-   transcriptPreviewText: {
-     fontSize: 13,
-     fontWeight: "500",
-     lineHeight: 18,
-   },
+  voiceOverlay: {
+    flex: 1,
+    backgroundColor: "#0A1014",
+  },
+  voiceContainer: {
+    flex: 1,
+    position: "relative",
+  },
+  recordingIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingTop: 60,
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#FF4444",
+  },
+  recordingText: {
+    color: "#FF6B6B",
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 1,
+  },
+  voiceCloseBtn: {
+    position: "absolute",
+    left: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "rgba(255,60,60,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,107,107,0.4)",
+  },
+  closeProcessing: {
+    color: "#FF6B6B",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  transcriptPreview: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginHorizontal: 24,
+    marginBottom: 8,
+  },
+  transcriptPreviewText: {
+    fontSize: 13,
+    fontWeight: "500",
+    lineHeight: 18,
+  },
   voiceContent: {
     flex: 1,
     alignItems: "center",
