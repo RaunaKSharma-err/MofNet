@@ -25,6 +25,11 @@ app = FastAPI(
     version="1.0.0",
 )
 
+@app.on_event("startup")
+async def startup_event():
+    print("[BACKEND] MofNet API starting up...")
+    print("[BACKEND] Backend is ready to accept requests")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -540,6 +545,8 @@ async def transcribe_speech(file: UploadFile = File(...)):
         import tempfile
         content = await file.read()
 
+        print(f"[SPEECH] /speech/transcribe received file: {file.filename}, size: {len(content)} bytes")
+
         if len(content) == 0:
             raise HTTPException(status_code=400, detail="Empty audio file")
 
@@ -555,11 +562,14 @@ async def transcribe_speech(file: UploadFile = File(...)):
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
+        print(f"[SPEECH] Saved audio to: {tmp_path}")
         text = speech_service.transcribe(tmp_path)
+        print(f"[SPEECH] Transcription result: {text[:100]}")
         return {"text": text, "language": "en"}
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[SPEECH] /speech/transcribe error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -573,6 +583,8 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
         import tempfile
         content = await file.read()
 
+        print(f"[SPEECH] /speech/chat received file: {file.filename}, size: {len(content)} bytes")
+
         if len(content) == 0:
             raise HTTPException(status_code=400, detail="Empty audio file")
 
@@ -588,7 +600,9 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
+        print(f"[SPEECH] Saved audio to: {tmp_path}")
         english_text = speech_service.transcribe(tmp_path)
+        print(f"[SPEECH] Transcription: {english_text[:100]}")
 
         if not english_text.strip():
             raise HTTPException(status_code=400, detail="Could not transcribe audio. Please try again.")
@@ -596,6 +610,7 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
         cache_key = english_text.strip().lower()
         cached = _voice_cache.get(cache_key)
         if cached is not None:
+            print(f"[SPEECH] Cache hit for: {english_text[:50]}")
             return {
                 "transcription": english_text,
                 "answer": cached,
@@ -632,6 +647,7 @@ async def voice_chat(file: UploadFile = File(...), grade: int | None = None, sub
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[SPEECH] /speech/chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -644,6 +660,8 @@ async def voice_chat_stream(file: UploadFile = File(...), grade: int | None = No
     try:
         import tempfile
         content = await file.read()
+
+        print(f"[SPEECH] /speech/chat/stream received file: {file.filename}, size: {len(content)} bytes")
 
         if len(content) == 0:
             async def _err():
@@ -664,7 +682,9 @@ async def voice_chat_stream(file: UploadFile = File(...), grade: int | None = No
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_path = tmp.name
+        print(f"[SPEECH] Saved audio to: {tmp_path}")
         english_text = speech_service.transcribe(tmp_path)
+        print(f"[SPEECH] Transcription: {english_text[:100]}")
 
         if not english_text.strip():
             async def _err():
@@ -680,6 +700,8 @@ async def voice_chat_stream(file: UploadFile = File(...), grade: int | None = No
             return StreamingResponse(_cached(), media_type="text/event-stream")
 
         temperature = rag_service._settings.rag_llm_temperature
+        num_thread = num_thread_override or _auto_detect_threads()
+        num_predict = num_predict_override or rag_service._settings.rag_num_predict
 
         async def _stream():
             try:
@@ -691,40 +713,54 @@ async def voice_chat_stream(file: UploadFile = File(...), grade: int | None = No
                 )
                 embedding_duration_ms = (time.perf_counter() - embedding_start) * 1000
                 retrieval_duration_ms = retrieval.retrieval_duration_ms
+                top_score = retrieval.chunks[0].relevance_score if retrieval.chunks else 0.0
 
-                filtered_chunks = rag_service._filter_context_chunks(
-                    retrieval.chunks,
-                    min_score=rag_service._settings.rag_min_score,
-                    top_score=retrieval.chunks[0].relevance_score if retrieval.chunks else 0,
-                )
+                route = rag_service._route_question(english_text, retrieval)
+                mode = route["mode"]
+                selected_model = route["model"]
 
-                context = RAGContext(
-                    question=english_text,
-                    chunks=filtered_chunks,
-                    grade=grade,
-                    subject=subject,
-                    language="en",
-                )
+                if mode == "safety":
+                    yield f"data: {json.dumps({'chunk': '', 'done': True, 'answer': route['answer'], 'transcription': english_text, 'top_score': top_score, 'mode': 'safety', 'model': None})}\n\n"
+                    return
+
+                if mode == "general":
+                    from app.rag.general_prompt_builder import build_general_messages
+                    messages = build_general_messages(english_text, "en")
+                    filtered_chunks = []
+                else:
+                    filtered_chunks = rag_service._filter_context_chunks(
+                        retrieval.chunks,
+                        min_score=rag_service._settings.rag_min_score,
+                        top_score=top_score,
+                    )
+                    from app.rag.models import RAGContext
+                    context = RAGContext(
+                        question=english_text,
+                        chunks=filtered_chunks,
+                        grade=grade,
+                        subject=subject,
+                        language="en",
+                    )
+                    messages = rag_service._prompt_builder.build_messages(context)
+
                 prompt_start = time.perf_counter()
-                messages = rag_service._prompt_builder.build_messages(context)
-                prompt_duration_ms = (time.perf_counter() - prompt_start) * 1000
-
                 full_answer: list[str] = []
                 async for token in rag_service._llm_provider.generate_stream(
                     messages=messages,
                     temperature=temperature,
-                    num_predict=num_predict_override,
-                    num_thread=num_thread_override,
+                    num_predict=num_predict,
+                    num_thread=num_thread,
+                    model=selected_model,
                 ):
                     if token.startswith("\n__LLM_LATENCY__:"):
                         continue
                     full_answer.append(token)
-                    yield f"data: {json.dumps({'chunk': token})}\n\n"
+                    yield f"data: {json.dumps({'chunk': token, 'mode': mode, 'model': selected_model})}\n\n"
 
                 answer = "".join(full_answer)
                 answer = _strip_llm_fallback(answer)
                 _voice_cache.set(cache_key, answer)
-                yield f"data: {json.dumps({'chunk': '', 'done': True, 'answer': answer, 'transcription': english_text})}\n\n"
+                yield f"data: {json.dumps({'chunk': '', 'done': True, 'answer': answer, 'transcription': english_text, 'top_score': top_score, 'mode': mode, 'model': selected_model})}\n\n"
 
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"

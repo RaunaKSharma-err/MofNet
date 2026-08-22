@@ -15,15 +15,23 @@ class WhisperSpeechProvider(SpeechProvider):
         )
 
     def transcribe(self, audio_path: str) -> str:
+        print(f"[WHISPER] Transcribing: {audio_path}")
         segments, _info = self.model.transcribe(
             audio_path,
             task="translate",
-            beam_size=3,
-            best_of=3,
+            beam_size=1,
+            best_of=1,
             vad_filter=True,
+            vad_parameters=dict(
+                min_silence_duration_ms=500,
+                speech_pad_ms=200,
+            ),
             condition_on_previous_text=False,
         )
-        return "".join(segment.text for segment in segments)
+        text = "".join(segment.text for segment in segments)
+        result = text.strip()
+        print(f"[WHISPER] Result: {result[:100]}")
+        return result
 
 
 @lru_cache(maxsize=1)
